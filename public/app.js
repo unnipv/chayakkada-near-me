@@ -449,6 +449,7 @@ async function showShopDetail(shopId) {
             </ul>
           ` : ''}
           ${shop.latestMetadata.sells_cigarettes ? '<p><span class="cigarettes-badge">🚬 Sells Cigarettes</span></p>' : ''}
+          ${shop.latestMetadata.contributed_by ? `<p style="margin-top: 15px; color: #666; font-size: 0.9em;"><em>Contributed by ${shop.latestMetadata.contributed_by} on ${new Date(shop.latestMetadata.contributed_at).toLocaleDateString()}</em></p>` : ''}
         </div>
       ` : ''}
 
