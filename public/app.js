@@ -3,28 +3,189 @@ let map;
 let markers = [];
 let searchResults = [];
 let currentLocation = null;
-let placesService;
-let autocompleteService;
 let selectedPlace = null;
-let locationAutocomplete;
+let currentUser = null;
 
-// Initialize Google Maps
+// Authentication functions
+async function checkAuthStatus() {
+  try {
+    const response = await fetch('/api/auth/me', {
+      credentials: 'include'
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      currentUser = data.user;
+      updateAuthUI();
+    } else {
+      currentUser = null;
+      updateAuthUI();
+    }
+  } catch (error) {
+    console.error('Auth check error:', error);
+    currentUser = null;
+    updateAuthUI();
+  }
+}
+
+function updateAuthUI() {
+  const loginBtn = document.getElementById('login-btn');
+  const userMenu = document.getElementById('user-menu');
+  const usernameDisplay = document.getElementById('username-display');
+
+  if (currentUser) {
+    loginBtn.style.display = 'none';
+    userMenu.style.display = 'inline-block';
+    usernameDisplay.textContent = `👤 ${currentUser.username}`;
+  } else {
+    loginBtn.style.display = 'inline-block';
+    userMenu.style.display = 'none';
+  }
+}
+
+function showAuthModal(mode) {
+  const modal = document.getElementById('auth-modal');
+  const loginForm = document.getElementById('login-form');
+  const registerForm = document.getElementById('register-form');
+
+  if (mode === 'login') {
+    loginForm.style.display = 'block';
+    registerForm.style.display = 'none';
+  } else {
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'block';
+  }
+
+  modal.style.display = 'block';
+}
+
+function closeAuthModal() {
+  document.getElementById('auth-modal').style.display = 'none';
+  // Clear forms
+  document.getElementById('login-username').value = '';
+  document.getElementById('login-password').value = '';
+  document.getElementById('register-username').value = '';
+  document.getElementById('register-password').value = '';
+  document.getElementById('register-password-confirm').value = '';
+}
+
+async function handleLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+
+  if (!username || !password) {
+    alert('Please enter username and password');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ username, password })
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      currentUser = data.user;
+      updateAuthUI();
+      closeAuthModal();
+      alert(`Welcome back, ${data.user.username}!`);
+    } else {
+      alert(data.error || 'Login failed');
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    alert('Login failed. Please try again.');
+  }
+}
+
+async function handleRegister() {
+  const username = document.getElementById('register-username').value.trim();
+  const password = document.getElementById('register-password').value;
+  const confirmPassword = document.getElementById('register-password-confirm').value;
+
+  if (!username || !password || !confirmPassword) {
+    alert('Please fill in all fields');
+    return;
+  }
+
+  if (username.length < 3) {
+    alert('Username must be at least 3 characters');
+    return;
+  }
+
+  if (password.length < 6) {
+    alert('Password must be at least 6 characters');
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    alert('Passwords do not match');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ username, password })
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      currentUser = data.user;
+      updateAuthUI();
+      closeAuthModal();
+      alert(`Welcome, ${data.user.username}! Your account has been created.`);
+    } else {
+      alert(data.error || 'Registration failed');
+    }
+  } catch (error) {
+    console.error('Registration error:', error);
+    alert('Registration failed. Please try again.');
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include'
+    });
+
+    currentUser = null;
+    updateAuthUI();
+    alert('Logged out successfully');
+  } catch (error) {
+    console.error('Logout error:', error);
+    alert('Logout failed. Please try again.');
+  }
+}
+
+// Initialize Leaflet Map
 function initMap() {
-  // Initialize map (hidden initially)
-  map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: 10.8505, lng: 76.2711 }, // Kerala center
-    zoom: 10
-  });
+  // Create Leaflet map centered on Kerala
+  map = L.map('map').setView([10.8505, 76.2711], 10);
 
-  // Initialize Places services
-  placesService = new google.maps.places.PlacesService(map);
-  autocompleteService = new google.maps.places.AutocompleteService();
+  // Add OpenStreetMap tiles
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19
+  }).addTo(map);
 
   // Setup place search autocomplete for contribution form
   setupPlaceSearch();
 
-  // Setup location search autocomplete for main search
+  // Setup location search autocomplete
   setupLocationSearch();
+
+  // Check authentication status on page load
+  checkAuthStatus();
 }
 
 // View Management
@@ -33,6 +194,14 @@ function showView(viewName) {
     view.classList.remove('active');
   });
   document.getElementById(`${viewName}-view`).classList.add('active');
+
+  // Auto-populate contributor name when opening contribute view
+  if (viewName === 'contribute' && currentUser) {
+    const contributorNameField = document.getElementById('contributor-name');
+    if (contributorNameField && !contributorNameField.value) {
+      contributorNameField.value = currentUser.username;
+    }
+  }
 }
 
 // Search functionality
@@ -120,23 +289,34 @@ function displayResults(shops, userLocation) {
   }
 
   shopsList.innerHTML = shops.map(shop => `
-    <div class="shop-card" onclick="showShopDetail(${shop.id})">
-      <div class="shop-card-header">
-        <div>
-          <div class="shop-name">${shop.name}</div>
-          <div class="shop-address">${shop.address || 'Address not available'}</div>
+    <div class="shop-card">
+      <div onclick="showShopDetail(${shop.id})" style="cursor: pointer;">
+        <div class="shop-card-header">
+          <div>
+            <div class="shop-name">${shop.name}</div>
+            <div class="shop-address">${shop.address || 'Address not available'}</div>
+          </div>
+          <div class="shop-distance">
+            🚶 ${shop.walkingTime} min
+          </div>
         </div>
-        <div class="shop-distance">
-          🚶 ${shop.walkingTime} min
+        <div class="shop-meta">
+          ${shop.google_rating ? `<div class="meta-item">⭐ ${shop.google_rating}</div>` : ''}
+          ${shop.chayakkada_rating ? `<div class="meta-item"><span class="rating-badge">Chayakkada: ${shop.chayakkada_rating}/5</span></div>` : ''}
+          <div class="meta-item">📍 ${shop.walkingDistance} km</div>
+          ${shop.sells_cigarettes ? '<div class="meta-item"><span class="cigarettes-badge">🚬 Cigarettes</span></div>' : ''}
         </div>
+        ${shop.items_available ? `<div class="meta-item" style="margin-top: 10px;">☕ ${shop.items_available}</div>` : ''}
       </div>
-      <div class="shop-meta">
-        ${shop.google_rating ? `<div class="meta-item">⭐ ${shop.google_rating}</div>` : ''}
-        ${shop.chayakkada_rating ? `<div class="meta-item"><span class="rating-badge">Chayakkada: ${shop.chayakkada_rating}/5</span></div>` : ''}
-        <div class="meta-item">📍 ${shop.walkingdistance} km</div>
-        ${shop.sells_cigarettes ? '<div class="meta-item"><span class="cigarettes-badge">🚬 Cigarettes</span></div>' : ''}
+      <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${shop.latitude},${shop.longitude}"
+           target="_blank"
+           class="btn btn-primary"
+           style="width: 100%; text-align: center; text-decoration: none; display: inline-block;"
+           onclick="event.stopPropagation()">
+          🗺️ Navigate with Google Maps
+        </a>
       </div>
-      ${shop.items_available ? `<div class="meta-item" style="margin-top: 10px;">☕ ${shop.items_available}</div>` : ''}
     </div>
   `).join('');
 
@@ -146,46 +326,35 @@ function displayResults(shops, userLocation) {
 
 function updateMap(shops, userLocation) {
   // Clear existing markers
-  markers.forEach(marker => marker.setMap(null));
+  markers.forEach(marker => marker.remove());
   markers = [];
 
   // Center map on user location
-  map.setCenter(userLocation);
-  map.setZoom(13);
+  map.setView([userLocation.lat, userLocation.lng], 13);
 
   // Add user location marker
-  new google.maps.Marker({
-    position: userLocation,
-    map: map,
-    icon: {
-      path: google.maps.SymbolPath.CIRCLE,
-      scale: 10,
-      fillColor: '#4285F4',
-      fillOpacity: 1,
-      strokeColor: 'white',
-      strokeWeight: 2
-    },
-    title: 'Your Location'
-  });
+  const userMarker = L.marker([userLocation.lat, userLocation.lng], {
+    icon: L.divIcon({
+      className: 'user-marker',
+      html: '<div style="background: #4285F4; border-radius: 50%; width: 20px; height: 20px; border: 2px solid white;"></div>',
+      iconSize: [20, 20]
+    })
+  }).addTo(map).bindPopup('Your Location');
+  markers.push(userMarker);
 
   // Add chayakkada markers
   shops.forEach(shop => {
-    const marker = new google.maps.Marker({
-      position: { lat: shop.latitude, lng: shop.longitude },
-      map: map,
-      title: shop.name,
-      icon: {
-        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-          <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="20" cy="20" r="15" fill="#6B4423" stroke="white" stroke-width="2"/>
-            <text x="20" y="25" font-size="16" text-anchor="middle" fill="white">☕</text>
-          </svg>
-        `),
-        scaledSize: new google.maps.Size(40, 40)
-      }
-    });
+    const marker = L.marker([shop.latitude, shop.longitude], {
+      icon: L.divIcon({
+        className: 'chayakkada-marker',
+        html: '<div style="background: #6B4423; border-radius: 50%; width: 30px; height: 30px; border: 2px solid white; display: flex; align-items: center; justify-content: center; font-size: 16px;">☕</div>',
+        iconSize: [30, 30]
+      })
+    }).addTo(map);
 
-    marker.addListener('click', () => {
+    marker.bindPopup(`<strong>${shop.name}</strong><br>${shop.walkingTime} min walk`);
+
+    marker.on('click', () => {
       showShopDetail(shop.id);
     });
 
@@ -213,6 +382,9 @@ function toggleView(viewType) {
     mapBtn.classList.remove('btn-secondary');
     listBtn.classList.add('btn-secondary');
     listBtn.classList.remove('btn-primary');
+
+    // Invalidate map size when showing it
+    setTimeout(() => map.invalidateSize(), 100);
   }
 }
 
@@ -285,7 +457,7 @@ async function showShopDetail(shopId) {
           <h3>Photos</h3>
           <div class="photo-gallery">
             ${shop.google_photo_references.slice(0, 6).map(ref => `
-              <img src="https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${ref}&key=YOUR_API_KEY" alt="Chayakkada photo">
+              <img src="/api/photo-proxy?photo_reference=${ref}&maxwidth=400" alt="Chayakkada photo">
             `).join('')}
           </div>
         </div>
@@ -464,14 +636,14 @@ async function submitContribution(shopId) {
   }
 }
 
-// Place search for contribution
+// Place search for contribution using backend proxy
 function setupPlaceSearch() {
   const searchInput = document.getElementById('place-search');
   const suggestionsDiv = document.getElementById('place-suggestions');
 
   let debounceTimer;
 
-  searchInput.addEventListener('input', (e) => {
+  searchInput.addEventListener('input', async (e) => {
     clearTimeout(debounceTimer);
     const query = e.target.value.trim();
 
@@ -481,21 +653,20 @@ function setupPlaceSearch() {
       return;
     }
 
-    debounceTimer = setTimeout(() => {
-      autocompleteService.getPlacePredictions(
-        {
-          input: query,
-          componentRestrictions: { country: 'in' }
-        },
-        (predictions, status) => {
-          if (status === google.maps.places.PlacesServiceStatus.OK && predictions) {
-            displaySuggestions(predictions);
-          } else {
-            suggestionsDiv.innerHTML = '';
-            suggestionsDiv.style.display = 'none';
-          }
+    debounceTimer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (data.predictions && data.predictions.length > 0) {
+          displaySuggestions(data.predictions);
+        } else {
+          suggestionsDiv.innerHTML = '';
+          suggestionsDiv.style.display = 'none';
         }
-      );
+      } catch (error) {
+        console.error('Autocomplete error:', error);
+      }
     }, 300);
   });
 }
@@ -513,39 +684,43 @@ function displaySuggestions(predictions) {
   suggestionsDiv.style.display = 'block';
 }
 
-function selectPlace(placeId) {
-  placesService.getDetails(
-    { placeId: placeId },
-    (place, status) => {
-      if (status === google.maps.places.PlacesServiceStatus.OK) {
-        selectedPlace = {
-          google_place_id: place.place_id,
-          name: place.name,
-          latitude: place.geometry.location.lat(),
-          longitude: place.geometry.location.lng(),
-          address: place.formatted_address,
-          google_rating: place.rating,
-          google_photo_references: place.photos ? place.photos.slice(0, 5).map(p => p.photo_reference) : []
-        };
+async function selectPlace(placeId) {
+  try {
+    const response = await fetch(`/api/places/details?place_id=${placeId}`);
+    const data = await response.json();
 
-        // Display selected place
-        document.getElementById('place-suggestions').innerHTML = '';
-        document.getElementById('place-suggestions').style.display = 'none';
+    if (data.result) {
+      const place = data.result;
+      selectedPlace = {
+        google_place_id: place.place_id,
+        name: place.name,
+        latitude: place.geometry.location.lat,
+        longitude: place.geometry.location.lng,
+        address: place.formatted_address,
+        google_rating: place.rating,
+        google_photo_references: place.photos ? place.photos.slice(0, 5).map(p => p.photo_reference) : []
+      };
 
-        const selectedPlaceDiv = document.getElementById('selected-place');
-        selectedPlaceDiv.style.display = 'block';
+      // Display selected place
+      document.getElementById('place-suggestions').innerHTML = '';
+      document.getElementById('place-suggestions').style.display = 'none';
 
-        document.getElementById('place-details').innerHTML = `
-          <p><strong>${selectedPlace.name}</strong></p>
-          <p>${selectedPlace.address}</p>
-          ${selectedPlace.google_rating ? `<p>⭐ ${selectedPlace.google_rating}</p>` : ''}
-        `;
+      const selectedPlaceDiv = document.getElementById('selected-place');
+      selectedPlaceDiv.style.display = 'block';
 
-        // Show metadata section
-        document.getElementById('metadata-section').style.display = 'block';
-      }
+      document.getElementById('place-details').innerHTML = `
+        <p><strong>${selectedPlace.name}</strong></p>
+        <p>${selectedPlace.address}</p>
+        ${selectedPlace.google_rating ? `<p>⭐ ${selectedPlace.google_rating}</p>` : ''}
+      `;
+
+      // Show metadata section
+      document.getElementById('metadata-section').style.display = 'block';
     }
-  );
+  } catch (error) {
+    console.error('Place details error:', error);
+    alert('Failed to get place details');
+  }
 }
 
 // Rating stars display
@@ -576,7 +751,12 @@ async function submitChayakkada() {
   const chayakkadaRating = parseFloat(document.getElementById('chayakkada-rating').value) || null;
   const itemsAvailable = document.getElementById('items-available').value.trim() || null;
   const sellsCigarettes = document.getElementById('sells-cigarettes').checked;
-  const contributorName = document.getElementById('contributor-name').value.trim() || 'Anonymous';
+
+  // Use username if logged in, otherwise use provided name or "Omanakkuttan"
+  let contributorName = document.getElementById('contributor-name').value.trim();
+  if (!contributorName) {
+    contributorName = currentUser ? currentUser.username : 'Omanakkuttan';
+  }
 
   try {
     const response = await fetch('/api/chayakkada', {
@@ -697,40 +877,74 @@ async function submitReview(shopId) {
   }
 }
 
-// Setup location search autocomplete for main search
+// Location search autocomplete for main search input
 function setupLocationSearch() {
   const locationInput = document.getElementById('location-input');
+  const suggestionsDiv = document.getElementById('location-suggestions');
 
-  // Create autocomplete instance
-  locationAutocomplete = new google.maps.places.Autocomplete(locationInput, {
-    componentRestrictions: { country: 'in' },
-    fields: ['geometry', 'formatted_address', 'name']
-  });
+  let debounceTimer;
 
-  // Listen for place selection
-  locationAutocomplete.addListener('place_changed', () => {
-    const place = locationAutocomplete.getPlace();
+  locationInput.addEventListener('input', async (e) => {
+    clearTimeout(debounceTimer);
+    const query = e.target.value.trim();
 
-    if (!place.geometry) {
-      alert('No details available for this location');
+    // Clear currentLocation when user types
+    if (query !== 'Current Location') {
+      currentLocation = null;
+    }
+
+    if (query.length < 3) {
+      suggestionsDiv.innerHTML = '';
+      suggestionsDiv.style.display = 'none';
       return;
     }
 
-    // Store location for search
-    currentLocation = {
-      latitude: place.geometry.location.lat(),
-      longitude: place.geometry.location.lng()
-    };
+    debounceTimer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(query)}`);
+        const data = await response.json();
 
-    // Update input with formatted address
-    locationInput.value = place.formatted_address || place.name;
+        if (data.predictions && data.predictions.length > 0) {
+          displayLocationSuggestions(data.predictions);
+        } else {
+          suggestionsDiv.innerHTML = '';
+          suggestionsDiv.style.display = 'none';
+        }
+      } catch (error) {
+        console.error('Location autocomplete error:', error);
+      }
+    }, 300);
   });
+}
+
+function displayLocationSuggestions(predictions) {
+  const suggestionsDiv = document.getElementById('location-suggestions');
+
+  suggestionsDiv.innerHTML = predictions.map(prediction => `
+    <div class="suggestion-item" onclick="selectLocation('${prediction.description.replace(/'/g, "\\'")}')">
+      <strong>${prediction.structured_formatting.main_text}</strong><br>
+      <small>${prediction.structured_formatting.secondary_text}</small>
+    </div>
+  `).join('');
+
+  suggestionsDiv.style.display = 'block';
+}
+
+function selectLocation(description) {
+  document.getElementById('location-input').value = description;
+  document.getElementById('location-suggestions').innerHTML = '';
+  document.getElementById('location-suggestions').style.display = 'none';
+  currentLocation = null; // Will be geocoded when search button is clicked
 }
 
 // Close modal when clicking outside
 window.onclick = function(event) {
   const modal = document.getElementById('detail-modal');
+  const authModal = document.getElementById('auth-modal');
   if (event.target === modal) {
     modal.style.display = 'none';
+  }
+  if (event.target === authModal) {
+    closeAuthModal();
   }
 }

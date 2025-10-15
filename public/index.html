@@ -17,6 +17,13 @@
       <nav class="nav-buttons">
         <button class="btn btn-secondary" onclick="showView('search')">Search</button>
         <button class="btn btn-primary" onclick="showView('contribute')">Add Chayakkada</button>
+        <div id="auth-section">
+          <button class="btn btn-secondary" id="login-btn" onclick="showAuthModal('login')" style="display: inline-block;">Login</button>
+          <div id="user-menu" style="display: none;">
+            <span id="username-display"></span>
+            <button class="btn btn-secondary" onclick="handleLogout()">Logout</button>
+          </div>
+        </div>
       </nav>
     </header>
 
@@ -34,6 +41,7 @@
             placeholder="Enter location (e.g., Kochi, Thrissur)"
             class="input"
           >
+          <div id="location-suggestions" class="suggestions"></div>
           <button class="btn btn-link" onclick="useCurrentLocation()">
             📍 Use my current location
           </button>
@@ -166,7 +174,7 @@
             <input
               type="text"
               id="contributor-name"
-              placeholder="Anonymous"
+              placeholder="Omanakkuttan"
               class="input"
             >
           </div>
@@ -185,9 +193,85 @@
         <div id="detail-content"></div>
       </div>
     </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="modal">
+      <div class="modal-content" style="max-width: 400px;">
+        <span class="close" onclick="closeAuthModal()">&times;</span>
+        <div id="auth-content">
+          <!-- Login Form -->
+          <div id="login-form" style="display: none;">
+            <h2>Login</h2>
+            <p class="help-text">Sign in to contribute and save your reviews</p>
+
+            <div class="form-group">
+              <label for="login-username">Username</label>
+              <input type="text" id="login-username" class="input" placeholder="Enter username" />
+            </div>
+
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input type="password" id="login-password" class="input" placeholder="Enter password" />
+            </div>
+
+            <button class="btn btn-primary btn-large" onclick="handleLogin()">Login</button>
+            <p style="text-align: center; margin-top: 15px;">
+              Don't have an account?
+              <a href="#" onclick="showAuthModal('register'); return false;" style="color: #6B4423; font-weight: bold;">Register</a>
+            </p>
+          </div>
+
+          <!-- Register Form -->
+          <div id="register-form" style="display: none;">
+            <h2>Register</h2>
+            <p class="help-text">Create an account to contribute</p>
+
+            <div class="form-group">
+              <label for="register-username">Username</label>
+              <input type="text" id="register-username" class="input" placeholder="Choose a username" />
+              <small style="color: #666;">Min 3 characters</small>
+            </div>
+
+            <div class="form-group">
+              <label for="register-password">Password</label>
+              <input type="password" id="register-password" class="input" placeholder="Choose a password" />
+              <small style="color: #666;">Min 6 characters</small>
+            </div>
+
+            <div class="form-group">
+              <label for="register-password-confirm">Confirm Password</label>
+              <input type="password" id="register-password-confirm" class="input" placeholder="Confirm password" />
+            </div>
+
+            <button class="btn btn-primary btn-large" onclick="handleRegister()">Register</button>
+            <p style="text-align: center; margin-top: 15px;">
+              Already have an account?
+              <a href="#" onclick="showAuthModal('login'); return false;" style="color: #6B4423; font-weight: bold;">Login</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""/>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""></script>
+
   <script src="app.js"></script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places&callback=initMap" async defer></script>
+  <script>
+    // Initialize map when page loads
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+      initMap();
+    }
+  </script>
 </body>
 </html>

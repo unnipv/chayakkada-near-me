@@ -2,15 +2,52 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const { Client } = require('@googlemaps/google-maps-services-js');
+const cookieParser = require('cookie-parser');
+const axios = require('axios');
+const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
 const logger = require('./logger');
+const { generateToken, verifyToken, optionalAuth } = require('./middleware/auth');
+const {
+  validateRegistration,
+  validateLogin,
+  validateReview,
+  validateMetadata,
+  validateAddChayakkada,
+  validateSearch
+} = require('./middleware/validators');
+const {
+  apiLimiter,
+  authLimiter,
+  contributionLimiter,
+  searchLimiter,
+  helmetConfig,
+  sanitizeData,
+  preventHpp
+} = require('./middleware/security');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Security checks
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET) {
+    logger.error('CRITICAL: JWT_SECRET not set in production!');
+    process.exit(1);
+  }
+  if (!process.env.GOOGLE_MAPS_API_KEY) {
+    logger.error('CRITICAL: GOOGLE_MAPS_API_KEY not set!');
+    process.exit(1);
+  }
+}
+
+// Security middleware (MUST be first)
+app.use(helmetConfig);
+app.use(preventHpp);
+app.use(sanitizeData);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -22,25 +59,28 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json());
+// CORS configuration - restrict in production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production'
+    ? process.env.ALLOWED_ORIGINS?.split(',') || []
+    : '*',
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+
+// Body parser with size limits
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 
 // Serve static files except index.html
 app.use(express.static('public', { index: false }));
 
-// Serve index.html with API key injected
+// Serve static index.html (no API key injection needed!)
 app.get('/', (req, res) => {
-  const indexPath = path.join(__dirname, 'public', 'index.html');
-  fs.readFile(indexPath, 'utf8', (err, data) => {
-    if (err) {
-      return res.status(500).send('Error loading page');
-    }
-
-    // Replace placeholder with actual API key from environment
-    const html = data.replace(/YOUR_API_KEY/g, process.env.GOOGLE_MAPS_API_KEY || 'YOUR_API_KEY');
-    res.send(html);
-  });
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // PostgreSQL connection pool
@@ -49,8 +89,6 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Google Maps client
-const googleMapsClient = new Client({});
 
 // Initialize database schema
 async function initDatabase() {
@@ -100,6 +138,7 @@ async function initDatabase() {
         chayakkada_id INTEGER NOT NULL,
         review_text TEXT NOT NULL,
         reviewer_name TEXT DEFAULT 'Anonymous',
+        user_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (chayakkada_id) REFERENCES chayakkadas(id) ON DELETE CASCADE
       )
@@ -109,6 +148,23 @@ async function initDatabase() {
     await client.query(`
       CREATE INDEX IF NOT EXISTS reviews_chayakkada_idx
       ON reviews(chayakkada_id)
+    `);
+
+    // Create users table for authentication
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login TIMESTAMP
+      )
+    `);
+
+    // Create index on username for faster lookups
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS users_username_idx
+      ON users(username)
     `);
 
     logger.info('Database schema initialized successfully');
@@ -124,8 +180,154 @@ initDatabase();
 
 // API Routes
 
+// ============================================
+// AUTHENTICATION ROUTES
+// ============================================
+
+// Register new user
+app.post('/api/auth/register', authLimiter, validateRegistration, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    logger.info('Registration attempt', { username });
+
+    // Check if user already exists
+    const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+
+    if (existing.rows.length > 0) {
+      logger.warn('Registration failed: username already exists', { username });
+      return res.status(400).json({ error: 'Username already taken' });
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Create user
+    const result = await pool.query(`
+      INSERT INTO users (username, password_hash)
+      VALUES ($1, $2)
+      RETURNING id, username, created_at
+    `, [username, passwordHash]);
+
+    const user = result.rows[0];
+
+    // Generate JWT token
+    const token = generateToken(user);
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
+    logger.info('User registered successfully', { username, userId: user.id });
+
+    res.json({
+      message: 'Registration successful',
+      user: {
+        id: user.id,
+        username: user.username
+      },
+      token
+    });
+  } catch (err) {
+    logger.error('Registration error:', err);
+    res.status(500).json({ error: 'Registration failed', details: err.message });
+  }
+});
+
+// Login user
+app.post('/api/auth/login', authLimiter, validateLogin, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    logger.info('Login attempt', { username });
+
+    // Get user
+    const result = await pool.query(`
+      SELECT id, username, password_hash FROM users WHERE username = $1
+    `, [username]);
+
+    if (result.rows.length === 0) {
+      logger.warn('Login failed: user not found', { username });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+
+    // Verify password
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+
+    if (!validPassword) {
+      logger.warn('Login failed: invalid password', { username });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Update last login
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+
+    // Generate JWT token
+    const token = generateToken(user);
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
+    logger.info('User logged in successfully', { username, userId: user.id });
+
+    res.json({
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        username: user.username
+      },
+      token
+    });
+  } catch (err) {
+    logger.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed', details: err.message });
+  }
+});
+
+// Logout user
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  logger.info('User logged out');
+  res.json({ message: 'Logged out successfully' });
+});
+
+// Get current user
+app.get('/api/auth/me', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, username, created_at, last_login
+      FROM users
+      WHERE id = $1
+    `, [req.user.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    logger.error('Get user error:', err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// ============================================
+// PUBLIC ROUTES (No auth required)
+// ============================================
+
 // Search chayakkadas by location and filters
-app.post('/api/search', async (req, res) => {
+app.post('/api/search', searchLimiter, validateSearch, async (req, res) => {
   try {
     const { latitude, longitude, maxDistance, maxWalkingTime } = req.body;
     logger.info('Search request received', { latitude, longitude, maxDistance, maxWalkingTime });
@@ -178,16 +380,22 @@ app.post('/api/search', async (req, res) => {
       lng: shop.longitude
     }));
 
-    // Call Google Maps Distance Matrix API
-    const distanceMatrixResponse = await googleMapsClient.distancematrix({
-      params: {
-        origins: [{ lat: latitude, lng: longitude }],
-        destinations: destinations,
-        mode: 'walking',
-        units: 'metric',
-        key: process.env.GOOGLE_MAPS_API_KEY
+    // Call Google Maps Distance Matrix API using axios
+    const origins = `${latitude},${longitude}`;
+    const dests = destinations.map(d => `${d.lat},${d.lng}`).join('|');
+
+    const distanceMatrixResponse = await axios.get(
+      'https://maps.googleapis.com/maps/api/distancematrix/json',
+      {
+        params: {
+          origins,
+          destinations: dests,
+          mode: 'walking',
+          units: 'metric',
+          key: process.env.GOOGLE_MAPS_API_KEY
+        }
       }
-    });
+    );
 
     // Combine results with walking data
     const shops = result.rows.map((shop, index) => {
@@ -278,6 +486,38 @@ app.get('/api/chayakkada/:id', async (req, res) => {
     shop.metadata = metadataResult.rows;
     shop.latestMetadata = metadataResult.rows[0] || null;
     shop.reviews = reviewsResult.rows;
+
+    // Fetch fresh photos from Google Places API if we have a place_id
+    if (shop.google_place_id) {
+      try {
+        logger.info(`Fetching fresh photos for ${shop.name} (place_id: ${shop.google_place_id})`);
+        const placesResponse = await axios.get(
+          'https://maps.googleapis.com/maps/api/place/details/json',
+          {
+            params: {
+              place_id: shop.google_place_id,
+              fields: 'photos',
+              key: process.env.GOOGLE_MAPS_API_KEY
+            }
+          }
+        );
+
+        logger.info(`Google API response status: ${placesResponse.data.status}`);
+
+        if (placesResponse.data.result && placesResponse.data.result.photos) {
+          // Get top 6 photo references
+          shop.google_photo_references = placesResponse.data.result.photos
+            .slice(0, 6)
+            .map(photo => photo.photo_reference);
+          logger.info(`✓ Fetched ${shop.google_photo_references.length} fresh photos for ${shop.name}`);
+        } else {
+          logger.warn(`No photos returned from Google Places API for ${shop.name}`);
+        }
+      } catch (photoErr) {
+        logger.error(`Failed to fetch fresh photos for ${shop.name}:`, photoErr.response?.data || photoErr.message);
+        // Keep existing photo references from database
+      }
+    }
 
     logger.info(`Chayakkada details fetched successfully: ${shop.name}`);
     res.json(shop);
@@ -371,12 +611,15 @@ app.post('/api/geocode', async (req, res) => {
   try {
     const { address } = req.body;
 
-    const response = await googleMapsClient.geocode({
-      params: {
-        address,
-        key: process.env.GOOGLE_MAPS_API_KEY
+    const response = await axios.get(
+      'https://maps.googleapis.com/maps/api/geocode/json',
+      {
+        params: {
+          address,
+          key: process.env.GOOGLE_MAPS_API_KEY
+        }
       }
-    });
+    );
 
     if (response.data.results.length > 0) {
       const location = response.data.results[0].geometry.location;
@@ -392,6 +635,128 @@ app.post('/api/geocode', async (req, res) => {
   } catch (err) {
     logger.error('Geocode error:', err);
     res.status(500).json({ error: 'Geocoding failed', details: err.message });
+  }
+});
+
+// Place autocomplete proxy (for frontend)
+app.get('/api/places/autocomplete', apiLimiter, async (req, res) => {
+  try {
+    const { input } = req.query;
+
+    if (!input || input.length < 3) {
+      return res.status(400).json({ error: 'Input must be at least 3 characters' });
+    }
+
+    const response = await axios.get(
+      'https://maps.googleapis.com/maps/api/place/autocomplete/json',
+      {
+        params: {
+          input,
+          components: 'country:in',
+          key: process.env.GOOGLE_MAPS_API_KEY
+        }
+      }
+    );
+
+    logger.info('Place autocomplete request', { input, results: response.data.predictions?.length || 0 });
+    res.json(response.data);
+  } catch (err) {
+    logger.error('Place autocomplete error:', err);
+    res.status(500).json({ error: 'Autocomplete failed' });
+  }
+});
+
+// Place details proxy (for frontend)
+app.get('/api/places/details', apiLimiter, async (req, res) => {
+  try {
+    const { place_id } = req.query;
+
+    if (!place_id) {
+      return res.status(400).json({ error: 'Place ID required' });
+    }
+
+    const response = await axios.get(
+      'https://maps.googleapis.com/maps/api/place/details/json',
+      {
+        params: {
+          place_id,
+          fields: 'place_id,name,geometry,formatted_address,rating,photos',
+          key: process.env.GOOGLE_MAPS_API_KEY
+        }
+      }
+    );
+
+    logger.info('Place details request', { place_id });
+    res.json(response.data);
+  } catch (err) {
+    logger.error('Place details error:', err);
+    res.status(500).json({ error: 'Place details failed' });
+  }
+});
+
+// Photo proxy endpoint (keeps API key secure on backend)
+app.get('/api/places/photo/:reference', apiLimiter, async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const { maxwidth = 400 } = req.query;
+
+    if (!reference) {
+      return res.status(400).json({ error: 'Photo reference required' });
+    }
+
+    const response = await axios.get(
+      'https://maps.googleapis.com/maps/api/place/photo',
+      {
+        params: {
+          photo_reference: reference,
+          maxwidth,
+          key: process.env.GOOGLE_MAPS_API_KEY
+        },
+        responseType: 'stream'
+      }
+    );
+
+    // Forward the image response
+    res.set('Content-Type', response.headers['content-type']);
+    res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    response.data.pipe(res);
+
+    logger.info('Photo served', { reference, maxwidth });
+  } catch (err) {
+    logger.error('Photo fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch photo' });
+  }
+});
+
+// Photo proxy with query params (alternative endpoint)
+app.get('/api/photo-proxy', apiLimiter, async (req, res) => {
+  try {
+    const { photo_reference, maxwidth = 400 } = req.query;
+
+    if (!photo_reference) {
+      return res.status(400).json({ error: 'Photo reference required' });
+    }
+
+    const response = await axios.get(
+      'https://maps.googleapis.com/maps/api/place/photo',
+      {
+        params: {
+          photo_reference,
+          maxwidth,
+          key: process.env.GOOGLE_MAPS_API_KEY
+        },
+        responseType: 'stream'
+      }
+    );
+
+    res.set('Content-Type', response.headers['content-type']);
+    res.set('Cache-Control', 'public, max-age=86400');
+    response.data.pipe(res);
+
+    logger.info('Photo proxy served', { photo_reference, maxwidth });
+  } catch (err) {
+    logger.error('Photo proxy error:', err);
+    res.status(500).json({ error: 'Failed to fetch photo' });
   }
 });
 
