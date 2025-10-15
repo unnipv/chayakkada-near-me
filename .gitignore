@@ -1,13 +1,18 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Environment variables
 .env
+.env.local
+.env.production
+.env.development
 
 # Database
 *.db
 *.db-shm
 *.db-wal
+*.sql.backup
 
 # Logs
 logs/
@@ -15,17 +20,43 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
+.history/
+.vs/
 
 # Build
 dist/
 build/
+.next/
+out/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.cache/
+.temp/
+.tmp/
+*.pid
+*.seed
+*.pid.lock

@@ -615,17 +615,84 @@ label {
 
 /* Responsive */
 @media (max-width: 768px) {
+  body {
+    padding: 10px;
+  }
+
   .header {
     flex-direction: column;
     text-align: center;
+    padding: 20px 15px;
+    gap: 15px;
   }
 
   .logo h1 {
     font-size: 1.5em;
   }
 
+  .tagline {
+    font-size: 1em;
+  }
+
+  .nav-buttons {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .nav-buttons .btn {
+    flex: 1 1 45%;
+    min-width: 120px;
+    padding: 10px 16px;
+    font-size: 0.9em;
+  }
+
+  #auth-section {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  #user-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+  }
+
+  .search-card,
+  .contribute-card {
+    padding: 20px 15px;
+  }
+
+  .search-card h2,
+  .contribute-card h2 {
+    font-size: 1.4em;
+  }
+
   .filters-row {
     grid-template-columns: 1fr;
+    gap: 15px;
+  }
+
+  .form-group label {
+    font-size: 0.9em;
+  }
+
+  .input,
+  .textarea {
+    padding: 10px 12px;
+    font-size: 0.95em;
+  }
+
+  .btn-large {
+    padding: 14px;
+    font-size: 1em;
+  }
+
+  .results-section {
+    padding: 20px 15px;
   }
 
   .results-header {
@@ -634,19 +701,151 @@ label {
     gap: 15px;
   }
 
+  .results-header h2 {
+    font-size: 1.3em;
+  }
+
+  .view-toggle {
+    width: 100%;
+  }
+
+  .view-toggle .btn {
+    flex: 1;
+  }
+
+  .shop-card {
+    padding: 15px;
+  }
+
   .shop-card-header {
     flex-direction: column;
     gap: 10px;
+    align-items: flex-start;
+  }
+
+  .shop-name {
+    font-size: 1.1em;
+  }
+
+  .shop-distance {
+    align-self: flex-start;
+  }
+
+  .shop-meta {
+    gap: 10px;
+    font-size: 0.85em;
   }
 
   .modal-content {
-    margin: 20px;
-    padding: 25px;
-    width: calc(100% - 40px);
+    margin: 10px;
+    padding: 20px;
+    width: calc(100% - 20px);
+    max-height: 90vh;
+  }
+
+  .modal-content h2 {
+    font-size: 1.3em;
+  }
+
+  .close {
+    font-size: 28px;
   }
 
   #map {
-    height: 400px;
+    height: 350px;
+  }
+
+  .detail-title {
+    font-size: 1.5em;
+  }
+
+  .detail-section {
+    padding: 15px;
+  }
+
+  .photo-gallery {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+
+  .photo-gallery img {
+    height: 150px;
+  }
+
+  .suggestions {
+    width: calc(100% - 30px);
+    max-height: 200px;
+  }
+}
+
+/* Extra small mobile devices */
+@media (max-width: 480px) {
+  body {
+    padding: 5px;
+  }
+
+  .header {
+    padding: 15px 10px;
+  }
+
+  .logo h1 {
+    font-size: 1.3em;
+  }
+
+  .tagline {
+    font-size: 0.9em;
+  }
+
+  .nav-buttons .btn {
+    flex: 1 1 100%;
+    min-width: unset;
+  }
+
+  .search-card,
+  .contribute-card,
+  .results-section {
+    padding: 15px 10px;
+    margin-bottom: 15px;
+  }
+
+  .search-card h2,
+  .contribute-card h2 {
+    font-size: 1.2em;
+  }
+
+  .btn {
+    padding: 10px 16px;
+    font-size: 0.9em;
+  }
+
+  .shop-card {
+    padding: 12px;
+  }
+
+  .shop-name {
+    font-size: 1em;
+  }
+
+  .shop-meta {
+    font-size: 0.8em;
+  }
+
+  .modal-content {
+    margin: 5px;
+    padding: 15px;
+    width: calc(100% - 10px);
+  }
+
+  #map {
+    height: 300px;
+  }
+
+  .photo-gallery {
+    grid-template-columns: 1fr;
+  }
+
+  .filters-row .form-group {
+    margin-bottom: 15px;
   }
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "chayakkada-near-me",
   "version": "1.0.0",
-  "description": "Find chayakkadas in your walkable radius",
+  "description": "Find chayakkadas (Kerala tea shops) in your walkable radius - A community-driven webapp to discover and contribute information about local tea shops",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,13 +10,31 @@
   },
   "keywords": [
     "chayakkada",
-    "tea",
+    "tea-shop",
     "kerala",
-    "maps"
+    "google-maps",
+    "geospatial",
+    "postgis",
+    "location-based",
+    "community",
+    "chai",
+    "tea"
   ],
-  "author": "",
+  "author": "Chayakkada Near Me Contributors",
   "license": "MIT",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/chayakkada-near-me.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/chayakkada-near-me/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/chayakkada-near-me#readme",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
   "dependencies": {
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.2",
